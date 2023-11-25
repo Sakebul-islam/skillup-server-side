@@ -33,6 +33,7 @@ const verifyToken = async (req, res, next) => {
     next();
   });
 };
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.BD_KEY}@cluster0.ltwp59m.mongodb.net/?retryWrites=true&w=majority`;
 const client = new MongoClient(uri, {
   serverApi: {
@@ -44,6 +45,9 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
+    const usersCollection = client.db('skillup').collection('users');
+    const feedbacksCollection = client.db('skillup').collection('feedbacks');
+
     // auth related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
@@ -74,6 +78,19 @@ async function run() {
       } catch (err) {
         res.status(500).send(err);
       }
+    });
+
+    // store user information
+    app.post('/users', async (req, res) => {
+      const user = req.body;
+      const result = await usersCollection.insertOne(user);
+      res.send(result);
+    });
+
+    // get all feedbacks from feedbacksCollection
+    app.get('/feedbacks', async (req, res) => {
+      const result = await feedbacksCollection.find().toArray();
+      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
