@@ -95,7 +95,7 @@ async function run() {
     });
 
     // ------------------------------------------------
-    // TEACHER APIs
+    //                 TEACHER APIs
     // ------------------------------------------------
     // post teachers to teachersCollection
     app.post('/teachers', async (req, res) => {
@@ -103,6 +103,7 @@ async function run() {
       const result = await teachersCollection.insertOne(teacherInfo);
       res.send(result);
     });
+
     // get teachers in teachersCollection
     app.get('/teachers', async (req, res) => {
       const email = req.query.email;
@@ -137,6 +138,31 @@ async function run() {
         res.status(500).send({ error: 'Internal Server Error' });
       }
     });
+
+    // ------------------------------------------------
+    //                 ADMIN APIs
+    // ------------------------------------------------
+
+    app.get('/users', verifyToken, async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.put('/users/update/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const user = req.body;
+      const query = { email: email };
+      const options = { upsert: true };
+      const updateDoc = {
+        $set: {
+          ...user,
+        },
+      };
+      const result = await usersCollection.updateOne(query, updateDoc, options);
+      res.send(result);
+    });
+
+    // ------------------------------------------------
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 });
