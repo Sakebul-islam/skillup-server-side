@@ -47,6 +47,7 @@ async function run() {
   try {
     const usersCollection = client.db('skillup').collection('users');
     const feedbacksCollection = client.db('skillup').collection('feedbacks');
+    const teachersCollection = client.db('skillup').collection('teachers');
 
     // auth related api
     app.post('/jwt', async (req, res) => {
@@ -93,6 +94,50 @@ async function run() {
       res.send(result);
     });
 
+    // ------------------------------------------------
+    // TEACHER APIs
+    // ------------------------------------------------
+    // post teachers to teachersCollection
+    app.post('/teachers', async (req, res) => {
+      const teacherInfo = req.body;
+      const result = await teachersCollection.insertOne(teacherInfo);
+      res.send(result);
+    });
+    // get teachers in teachersCollection
+    app.get('/teachers', async (req, res) => {
+      const email = req.query.email;
+      try {
+        const pendingResult = await teachersCollection
+          .find({
+            email: email,
+            status: 'pending',
+          })
+          .toArray();
+
+        const approvedResult = await teachersCollection
+          .find({
+            email: email,
+            status: 'approves',
+          })
+          .toArray();
+        const rejectedResult = await teachersCollection
+          .find({
+            email: email,
+            status: 'rejects',
+          })
+          .toArray();
+
+        res.send({
+          pending: pendingResult,
+          approved: approvedResult,
+          rejected: rejectedResult,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: 'Internal Server Error' });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 });
     console.log(
@@ -106,9 +151,9 @@ async function run() {
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-  res.send('Hello from StayVista Server..');
+  res.send('Hello from SkillUP Server..');
 });
 
 app.listen(port, () => {
-  console.log(`StayVista is running on port ${port}`);
+  console.log(`SkillUP is running on port ${port}`);
 });
