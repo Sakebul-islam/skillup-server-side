@@ -88,6 +88,13 @@ async function run() {
       res.send(result);
     });
 
+    // get user role
+    app.get('/users/:email', async (req, res) => {
+      const email = req.params.email;
+      const result = await usersCollection.findOne({ email });
+      res.send(result);
+    });
+
     // get all feedbacks from feedbacksCollection
     app.get('/feedbacks', async (req, res) => {
       const result = await feedbacksCollection.find().toArray();
@@ -148,6 +155,27 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/profile', verifyToken, async (req, res) => {
+      try {
+        const email = req.query.email;
+        const query = { email: email };
+        if (!email) {
+          return res.status(400).send({ error: 'Email parameter is missing' });
+        }
+
+        const result = await usersCollection.findOne(query);
+
+        if (!result) {
+          return res.status(404).send({ error: 'User not found' });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: 'Internal Server Error' });
+      }
+    });
+
     app.put('/users/update/:email', verifyToken, async (req, res) => {
       const email = req.params.email;
       const user = req.body;
@@ -162,7 +190,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get('/teachers/requests', async (req, res) => {
+    app.get('/teachers/requests', verifyToken, async (req, res) => {
       try {
         const result = await teachersCollection.find().toArray();
         res.send(result);
@@ -173,7 +201,7 @@ async function run() {
     });
 
     // API endpoint to update the status of a teacher
-    app.put('/teachers/update-status/:id', async (req, res) => {
+    app.put('/teachers/update-status/:id', verifyToken, async (req, res) => {
       try {
         const teacherId = req.params.id;
         const newStatus = req.body.status;
