@@ -162,6 +162,35 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/teachers/requests', async (req, res) => {
+      try {
+        const result = await teachersCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: 'Internal Server Error' });
+      }
+    });
+
+    // API endpoint to update the status of a teacher
+    app.put('/teachers/update-status/:id', async (req, res) => {
+      try {
+        const teacherId = req.params.id;
+        const newStatus = req.body.status;
+
+        // Update the status in the database
+        await teachersCollection.updateOne(
+          { _id: new ObjectId(teacherId) },
+          { $set: { status: newStatus } }
+        );
+
+        res.send({ message: 'Status updated successfully' });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: 'Internal Server Error' });
+      }
+    });
+
     // ------------------------------------------------
 
     // Send a ping to confirm a successful connection
