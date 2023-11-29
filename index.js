@@ -48,6 +48,8 @@ async function run() {
     const usersCollection = client.db('skillup').collection('users');
     const feedbacksCollection = client.db('skillup').collection('feedbacks');
     const teachersCollection = client.db('skillup').collection('teachers');
+    const classesCollection = client.db('skillup').collection('classes');
+    const paymentsCollection = client.db('skillup').collection('payments');
 
     // auth related api
     app.post('/jwt', async (req, res) => {
@@ -101,15 +103,132 @@ async function run() {
       res.send(result);
     });
 
-    // ------------------------------------------------
-    //                 TEACHER APIs
-    // ------------------------------------------------
     // post teachers to teachersCollection
     app.post('/teachers', async (req, res) => {
       const teacherInfo = req.body;
       const result = await teachersCollection.insertOne(teacherInfo);
       res.send(result);
     });
+
+    app.patch('/teachers/update-status/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        // Assuming you only want to update the status
+        const updatedStatus = { status: 'pending' };
+
+        const query = { email: email };
+        const updateDoc = {
+          $set: updatedStatus,
+        };
+
+        const result = await teachersCollection.updateOne(query, updateDoc);
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // get all classes
+    app.get('/classes', async (req, res) => {
+      const result = await classesCollection.find().toArray();
+      res.send(result);
+    });
+
+    // get single user classes
+    app.get('/classes/:email', async (req, res) => {
+      const email = req.params.email;
+      console.log(email);
+      const result = await classesCollection.find({ email }).toArray();
+      res.send(result);
+    });
+
+    // get single class
+    app.get('/classes/single/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await classesCollection.findOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    // add Classes
+    app.post('/classes', async (req, res) => {
+      const classInfo = req.body;
+      const result = await classesCollection.insertOne(classInfo);
+      res.send(result);
+    });
+
+    // Delete a class
+    app.delete('/classes/:id', async (req, res) => {
+      try {
+        const classId = req.params.id;
+
+        // Validate if classId is a valid ObjectId
+        if (!ObjectId.isValid(classId)) {
+          return res.status(400).send('Invalid class ID');
+        }
+
+        const result = await classesCollection.deleteOne({
+          _id: new ObjectId(classId),
+        });
+
+        if (result.deletedCount === 1) {
+          res.send('Class deleted successfully');
+        } else {
+          res.status(404).send('Class not found');
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // Top 4 Teachers API
+    app.get('/top-teachers', async (req, res) => {
+      try {
+        // Aggregate to get total enrollment per teacher
+        const enrollmentClassesOfTeacher = await classesCollection
+          .aggregate([
+            {
+              $group: {
+                _id: '$email',
+                totalEnrollment: { $sum: '$enroll' },
+              },
+            },
+            { $sort: { totalEnrollment: -1 } },
+            // { $limit: 4 }, // Comment out the limit for testing
+          ])
+          .toArray();
+
+        // console.log('Aggregation Result:', enrollmentClassesOfTeacher);
+
+        // Get teacher details based on email
+        const topTeachers = await Promise.all(
+          enrollmentClassesOfTeacher.map(async ({ _id, totalEnrollment }) => {
+            const teacherDetails = await teachersCollection.findOne(
+              { email: _id },
+              { projection: { image: 1, name: 1, _id: 0 } }
+            );
+            return {
+              image: teacherDetails.image,
+              name: teacherDetails.name,
+              totalEnrollment,
+            };
+          })
+        );
+
+
+        res.send(topTeachers);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // ------------------------------------------------
+    //                 TEACHER APIs
+    // ------------------------------------------------
 
     // get teachers in teachersCollection
     app.get('/teachers', async (req, res) => {
@@ -125,19 +244,19 @@ async function run() {
         const approvedResult = await teachersCollection
           .find({
             email: email,
-            status: 'approves',
+            status: 'approve',
           })
           .toArray();
         const rejectedResult = await teachersCollection
           .find({
             email: email,
-            status: 'rejects',
+            status: 'reject',
           })
           .toArray();
 
         res.send({
           pending: pendingResult,
-          approved: approvedResult,
+          approve: approvedResult,
           rejected: rejectedResult,
         });
       } catch (error) {
@@ -146,6 +265,33 @@ async function run() {
       }
     });
 
+    // Add assignment to a class by ID
+    app.post('/classes/add-assignment/:id', async (req, res) => {
+      try {
+        const classId = req.params.id;
+        const assignmentInfo = req.body;
+
+        // Validate if classId is a valid ObjectId
+        if (!ObjectId.isValid(classId)) {
+          return res.status(400).send('Invalid class ID');
+        }
+
+        // Assuming ClassesCollection is your MongoDB collection
+        const result = await classesCollection.updateOne(
+          { _id: new ObjectId(classId) },
+          { $push: assignmentInfo }
+        );
+
+        if (result.modifiedCount === 1) {
+          res.send('Assignment added successfully');
+        } else {
+          res.status(404).send('Class not found');
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
     // ------------------------------------------------
     //                 ADMIN APIs
     // ------------------------------------------------
@@ -177,17 +323,47 @@ async function run() {
     });
 
     app.put('/users/update/:email', verifyToken, async (req, res) => {
-      const email = req.params.email;
-      const user = req.body;
-      const query = { email: email };
-      const options = { upsert: true };
-      const updateDoc = {
-        $set: {
-          ...user,
-        },
-      };
-      const result = await usersCollection.updateOne(query, updateDoc, options);
-      res.send(result);
+      try {
+        const email = req.params.email;
+        const user = req.body;
+        const query = { email: email };
+        const options = { upsert: true };
+
+        // Update user in usersCollection
+        const updateUserDoc = {
+          $set: {
+            ...user,
+          },
+        };
+
+        // Update user in teachersCollection if the role is 'teacher'
+        if (user.role === 'teacher') {
+          const updateTeacherDoc = {
+            $set: {
+              status: 'approve',
+            },
+          };
+          await teachersCollection.updateOne(query, updateTeacherDoc, options);
+        } else if (user.role === 'student') {
+          // Update user in teachersCollection if the role is 'student'
+          const updateTeacherDoc = {
+            $set: {
+              status: 'pending',
+            },
+          };
+          await teachersCollection.updateOne(query, updateTeacherDoc, options);
+        }
+
+        const result = await usersCollection.updateOne(
+          query,
+          updateUserDoc,
+          options
+        );
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
     });
 
     app.get('/teachers/requests', verifyToken, async (req, res) => {
@@ -200,7 +376,7 @@ async function run() {
       }
     });
 
-    // API endpoint to update the status of a teacher
+    //  API endpoint to update the status of a teacher
     app.put('/teachers/update-status/:id', verifyToken, async (req, res) => {
       try {
         const teacherId = req.params.id;
@@ -212,10 +388,168 @@ async function run() {
           { $set: { status: newStatus } }
         );
 
+        // Find the corresponding user using the teacher's email
+        const teacher = await teachersCollection.findOne({
+          _id: new ObjectId(teacherId),
+        });
+        const userEmail = teacher.email;
+
+        // Update the user's role based on the new status
+        if (newStatus === 'pending' || newStatus === 'reject') {
+          await usersCollection.updateOne(
+            { email: userEmail },
+            { $set: { role: 'student' } }
+          );
+        } else if (newStatus === 'approve') {
+          await usersCollection.updateOne(
+            { email: userEmail },
+            { $set: { role: 'teacher' } }
+          );
+        }
+
         res.send({ message: 'Status updated successfully' });
       } catch (error) {
         console.error(error);
         res.status(500).send({ error: 'Internal Server Error' });
+      }
+    });
+
+    // Update class status
+    app.patch('/classes/update-status/:id', async (req, res) => {
+      try {
+        const classId = req.params.id;
+        const { status } = req.body;
+
+        // Assuming classesCollection is your MongoDB collection
+        const result = await classesCollection.updateOne(
+          { _id: new ObjectId(classId) },
+          { $set: { status: status } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    app.patch('/classes/update/:id', async (req, res) => {
+      try {
+        const classId = req.params.id;
+        const { updateData } = req.body;
+
+        // Validate if classId is a valid ObjectId
+        if (!ObjectId.isValid(classId)) {
+          return res.status(400).send('Invalid class ID');
+        }
+
+        // Assuming classesCollection is your MongoDB collection
+        const result = await classesCollection.updateOne(
+          { _id: new ObjectId(classId) },
+          { $set: updateData }
+        );
+
+        if (result.modifiedCount === 1) {
+          res.send('Class updated successfully');
+        } else {
+          res.status(404).send('Class not found');
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+    // ------------------------------------------------
+    // generate client secret for paymentIntent
+    // ------------------------------------------------
+    app.post('/create-payment-intent', verifyToken, async (req, res) => {
+      const { price } = req.body;
+      const amount = Math.ceil(parseFloat(price) * 100);
+      console.log(amount);
+      if (!price || amount < 1) return;
+      const { client_secret } = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'usd',
+        payment_method_types: ['card'],
+      });
+      res.send({ clientSecret: client_secret });
+    });
+
+    // save booking info in booking collection
+    app.post('/payments/:id', verifyToken, async (req, res) => {
+      try {
+        const payment = req.body;
+        const classId = req.params.id;
+
+        // Assuming classesCollection is your MongoDB collection for classes
+        const classResult = await classesCollection.findOne({
+          _id: new ObjectId(classId),
+        });
+
+        if (!classResult) {
+          return res.status(404).send('Class not found');
+        }
+
+        // Assuming enroll is a property in classesCollection
+        const enrollCount = classResult.enroll || 0;
+
+        // Update enroll count in classesCollection
+        const updateResult = await classesCollection.updateOne(
+          { _id: new ObjectId(classId) },
+          { $set: { enroll: enrollCount + 1 } }
+        );
+
+        if (updateResult.modifiedCount === 1) {
+          // Insert payment record into paymentsCollection
+          const paymentResult = await paymentsCollection.insertOne(payment);
+
+          res.send(paymentResult);
+        } else {
+          res.status(500).send('Failed to update enroll count');
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // ------------------------------------------------
+    //               site overall stats
+    // ------------------------------------------------
+    // Total User, Total Approved Classes, Total Enrollment API
+    app.get('/stats', async (req, res) => {
+      try {
+        // Assuming usersCollection is your MongoDB collection for users
+        const totalUsers = await usersCollection.countDocuments();
+
+        // Assuming classesCollection is your MongoDB collection for classes
+        const totalClasses = await classesCollection.countDocuments({
+          status: 'approve',
+        });
+
+        // Assuming enroll is a property in classesCollection
+        const totalEnrollment = await classesCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalEnrollment: { $sum: '$enroll' },
+              },
+            },
+          ])
+          .toArray();
+
+        const result = {
+          totalUsers,
+          totalClasses,
+          totalEnrollment:
+            totalEnrollment.length > 0 ? totalEnrollment[0].totalEnrollment : 0,
+        };
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Internal Server Error');
       }
     });
 
