@@ -10,7 +10,11 @@ const stripe = require('stripe')(process.env.PAYMENT_SECRET_KEY);
 
 // middleware
 const corsOptions = {
-  origin: ['http://localhost:5173', 'http://localhost:5174'],
+  origin: [
+    'https://skillup-66.netlify.app',
+    'http://localhost:5173',
+    'http://localhost:5174',
+  ],
   credentials: true,
   optionSuccessStatus: 200,
 };
@@ -26,7 +30,6 @@ const verifyToken = async (req, res, next) => {
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      console.log(err);
       return res.status(401).send({ message: 'unauthorized access' });
     }
     req.user = decoded;
@@ -50,11 +53,14 @@ async function run() {
     const teachersCollection = client.db('skillup').collection('teachers');
     const classesCollection = client.db('skillup').collection('classes');
     const paymentsCollection = client.db('skillup').collection('payments');
+    const feedBacksCollection = client.db('skillup').collection('feedbacks');
+    const assignmentSubmitCollection = client
+      .db('skillup')
+      .collection('assignmentSubmit');
 
     // auth related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
-      console.log('I need a new jwt', user);
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: '15d',
       });
@@ -77,7 +83,6 @@ async function run() {
             sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
           })
           .send({ success: true });
-        console.log('Logout successful');
       } catch (err) {
         res.status(500).send(err);
       }
@@ -126,7 +131,6 @@ async function run() {
 
         res.send(result);
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
@@ -140,7 +144,6 @@ async function run() {
     // get single user classes
     app.get('/classes/:email', async (req, res) => {
       const email = req.params.email;
-      console.log(email);
       const result = await classesCollection.find({ email }).toArray();
       res.send(result);
     });
@@ -179,7 +182,6 @@ async function run() {
           res.status(404).send('Class not found');
         }
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
@@ -201,8 +203,6 @@ async function run() {
           ])
           .toArray();
 
-        // console.log('Aggregation Result:', enrollmentClassesOfTeacher);
-
         // Get teacher details based on email
         const topTeachers = await Promise.all(
           enrollmentClassesOfTeacher.map(async ({ _id, totalEnrollment }) => {
@@ -218,10 +218,128 @@ async function run() {
           })
         );
 
-
         res.send(topTeachers);
       } catch (error) {
-        console.error(error);
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // Featured Courses API
+    app.get('/featured-courses', async (req, res) => {
+      try {
+        const featuredCourses = await classesCollection
+          .aggregate([
+            {
+              $match: { status: 'approve' }, // Consider only approved classes
+            },
+            {
+              $sort: { enroll: -1 }, // Sort by enrollment in descending order
+            },
+            {
+              $limit: 4, // Limit to the top 4 courses
+            },
+            {
+              $project: {
+                _id: 1,
+                classTitle: 1,
+                description: 1,
+                image: 1,
+                name: 1,
+                email: 1,
+                price: 1,
+                enroll: 1,
+              },
+            },
+          ])
+          .toArray();
+
+        res.send(featuredCourses);
+      } catch (error) {
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // ------------------------------------------------
+    //                 STUDENT APIs
+    // ------------------------------------------------
+    // API to Retrieve Enrolled Classes for a Student based on Class ID
+    app.get('/enrolled-classes/:email', verifyToken, async (req, res) => {
+      try {
+        const studentEmail = req.params.email;
+
+        // Assuming paymentsCollection is your MongoDB collection for payments
+        const paymentRecords = await paymentsCollection
+          .find({ 'student.email': studentEmail })
+          .toArray();
+
+        if (paymentRecords.length === 0) {
+          return res.status(404).send('Student not found in payment records');
+        }
+
+        const uniqueClassIds = Array.from(
+          new Set(
+            paymentRecords.map((record) => new ObjectId(record.class.classId))
+          )
+        );
+
+        // Assuming classesCollection is your MongoDB collection for classes
+        const studentClasses = await classesCollection
+          .find({ _id: { $in: uniqueClassIds } })
+          .toArray();
+
+        res.send(studentClasses);
+      } catch (error) {
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    app.post('/submit-assignment', verifyToken, async (req, res) => {
+      try {
+        const submissionData = req.body;
+
+        // Assuming assignmentSubmitCollection is your MongoDB collection for assignment submissions
+        const result = await assignmentSubmitCollection.insertOne(
+          submissionData
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    // submit Feedback
+    app.post('/submit-feedback', verifyToken, async (req, res) => {
+      try {
+        const feedbackData = req.body;
+
+        // Assuming feedbacksCollection is your MongoDB collection for feedbacks
+        const result = await feedBacksCollection.insertOne(feedbackData);
+        console.log(result);
+        // Check if the insertion was successful
+        if (result.acknowledged) {
+          res.json({
+            success: true,
+            message: 'Feedback submitted successfully!',
+          });
+        } else {
+          res.json({ success: false, message: 'Failed to submit feedback.' });
+        }
+      } catch (error) {
+        res.status(500).send('Internal Server Error');
+      }
+    });
+
+    app.get('/check-assignment', verifyToken, async (req, res) => {
+      try {
+        const { assignmentId, email, classId } = req.query;
+
+        const submissions = await assignmentSubmitCollection
+          .find({ email: email, classId: classId })
+          .toArray();
+
+        res.json(submissions);
+      } catch (error) {
         res.status(500).send('Internal Server Error');
       }
     });
@@ -231,7 +349,7 @@ async function run() {
     // ------------------------------------------------
 
     // get teachers in teachersCollection
-    app.get('/teachers', async (req, res) => {
+    app.get('/teachers', verifyToken, async (req, res) => {
       const email = req.query.email;
       try {
         const pendingResult = await teachersCollection
@@ -260,13 +378,12 @@ async function run() {
           rejected: rejectedResult,
         });
       } catch (error) {
-        console.error(error);
         res.status(500).send({ error: 'Internal Server Error' });
       }
     });
 
     // Add assignment to a class by ID
-    app.post('/classes/add-assignment/:id', async (req, res) => {
+    app.post('/classes/add-assignment/:id', verifyToken, async (req, res) => {
       try {
         const classId = req.params.id;
         const assignmentInfo = req.body;
@@ -288,17 +405,68 @@ async function run() {
           res.status(404).send('Class not found');
         }
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
+
+    app.get(
+      '/submitted-assignments/:classId',
+      verifyToken,
+      async (req, res) => {
+        try {
+          const classId = req.params.classId;
+
+          // Get the current date in the format YYYY-MM-DD
+          const currentDate = new Date().toISOString().split('T')[0];
+
+          // Assuming classId is stored as a string in the assignmentSubmitCollection
+          // If it's stored differently, adjust the query accordingly
+          const submittedAssignments = await assignmentSubmitCollection
+            .find({
+              classId: classId,
+              date: { $regex: new RegExp(currentDate) },
+            })
+            .toArray();
+
+          const totalSubmittedAssignments = submittedAssignments.length;
+
+          res.json(totalSubmittedAssignments);
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: 'Internal Server Error' });
+        }
+      }
+    );
     // ------------------------------------------------
     //                 ADMIN APIs
     // ------------------------------------------------
 
+    // API endpoint for getting all users or searching users
     app.get('/users', verifyToken, async (req, res) => {
-      const result = await usersCollection.find().toArray();
-      res.send(result);
+      try {
+        const searchTerm = req.query.searchTerm;
+
+        if (!searchTerm) {
+          // If no search query, return all users
+          const result = await usersCollection.find().toArray();
+          res.json(result);
+        } else {
+          // If search query, search for users with matching username or email
+          const result = await usersCollection
+            .find({
+              $or: [
+                { username: { $regex: new RegExp(searchTerm, 'i') } }, // Case-insensitive username search
+                { email: { $regex: new RegExp(searchTerm, 'i') } }, // Case-insensitive email search
+              ],
+            })
+            .toArray();
+
+          res.json(result);
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal Server Error' });
+      }
     });
 
     app.get('/profile', verifyToken, async (req, res) => {
@@ -317,7 +485,6 @@ async function run() {
 
         res.send(result);
       } catch (error) {
-        console.error(error);
         res.status(500).send({ error: 'Internal Server Error' });
       }
     });
@@ -361,7 +528,6 @@ async function run() {
         );
         res.send(result);
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
@@ -371,7 +537,6 @@ async function run() {
         const result = await teachersCollection.find().toArray();
         res.send(result);
       } catch (error) {
-        console.error(error);
         res.status(500).send({ error: 'Internal Server Error' });
       }
     });
@@ -409,13 +574,12 @@ async function run() {
 
         res.send({ message: 'Status updated successfully' });
       } catch (error) {
-        console.error(error);
         res.status(500).send({ error: 'Internal Server Error' });
       }
     });
 
     // Update class status
-    app.patch('/classes/update-status/:id', async (req, res) => {
+    app.patch('/classes/update-status/:id', verifyToken, async (req, res) => {
       try {
         const classId = req.params.id;
         const { status } = req.body;
@@ -428,12 +592,11 @@ async function run() {
 
         res.send(result);
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
 
-    app.patch('/classes/update/:id', async (req, res) => {
+    app.patch('/classes/update/:id', verifyToken, async (req, res) => {
       try {
         const classId = req.params.id;
         const { updateData } = req.body;
@@ -455,17 +618,36 @@ async function run() {
           res.status(404).send('Class not found');
         }
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
+
+    app.get('/feedbacks/:classId', verifyToken, async (req, res) => {
+      try {
+        const classId = req.params.classId;
+        console.log(classId);
+
+        // Assuming classId is stored as a string in the feedBacksCollection
+        // If it's stored differently, adjust the query accordingly
+        const feedbacks = await feedbacksCollection
+          .find({
+            classId: classId,
+          })
+          .toArray();
+
+        res.json(feedbacks);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal Server Error' });
+      }
+    });
+
     // ------------------------------------------------
     // generate client secret for paymentIntent
     // ------------------------------------------------
     app.post('/create-payment-intent', verifyToken, async (req, res) => {
       const { price } = req.body;
       const amount = Math.ceil(parseFloat(price) * 100);
-      console.log(amount);
       if (!price || amount < 1) return;
       const { client_secret } = await stripe.paymentIntents.create({
         amount: amount,
@@ -508,7 +690,6 @@ async function run() {
           res.status(500).send('Failed to update enroll count');
         }
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
@@ -548,7 +729,6 @@ async function run() {
 
         res.send(result);
       } catch (error) {
-        console.error(error);
         res.status(500).send('Internal Server Error');
       }
     });
@@ -556,10 +736,10 @@ async function run() {
     // ------------------------------------------------
 
     // Send a ping to confirm a successful connection
-    await client.db('admin').command({ ping: 1 });
-    console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!'
-    );
+    // await client.db('admin').command({ ping: 1 });
+    // console.log(
+    //   'Pinged your deployment. You successfully connected to MongoDB!'
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
